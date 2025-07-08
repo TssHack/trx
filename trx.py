@@ -10,7 +10,7 @@ import aiosqlite
 
 # — تنظیمات اولیه —
 
-API_KEY = “717675061:1p9xzK4wzYVqml3dVInIV4I3HgnW15ewFAWi8aIZ”  # توکن شما
+API_KEY = "717675061:1p9xzK4wzYVqml3dVInIV4I3HgnW15ewFAWi8aIZ”  # توکن شما
 ADMIN_ID = 2143480267  # آیدی عددی ادمین
 
 bot = Client(API_KEY)
