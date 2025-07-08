@@ -1,8 +1,8 @@
 import asyncio
 import json
 from datetime import datetime
-
-from balethon import Client, types, InlineKeyboardMarkup, InlineKeyboardButton
+from balethon import Client
+from balethon.objects import InlineKeyboard, ReplyKeyboard, InlineKeyboardButton
 import aiosqlite
 
 API_KEY = "717675061:1p9xzK4wzYVqml3dVInIV4I3HgnW15ewFAWi8aIZ"
