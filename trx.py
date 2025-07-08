@@ -239,10 +239,10 @@ async def admin_panel(message: Message):
 
 # --- اجرای ربات ---
 
-async def main():
-    await setup_database()
-    print("Bot is starting...")
-    await bot.run()
-
 if __name__ == "__main__":
-    asyncio.run(main())
+    # راه‌اندازی پایگاه داده
+    asyncio.run(setup_database())
+    
+    # اجرای ربات
+    print("Bot is starting...")
+    bot.run()
