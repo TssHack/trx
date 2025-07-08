@@ -2,13 +2,13 @@ import asyncio
 import json
 from datetime import datetime
 
-from balethon import Bot, types, InlineKeyboardMarkup, InlineKeyboardButton
+from balethon import Client, types, InlineKeyboardMarkup, InlineKeyboardButton
 import aiosqlite
 
 API_KEY = "717675061:1p9xzK4wzYVqml3dVInIV4I3HgnW15ewFAWi8aIZ"
 ADMIN_ID = 2143480267  # عدد آی‌دی شما
 
-bot = Bot(API_KEY)
+bot = Client(API_KEY)
 
 # حافظه موقتی برای آزمون در حال اجرا
 user_answers = {}
