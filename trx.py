@@ -1,139 +1,166 @@
-import requests
-import os
+import asyncio
+import json
+from datetime import datetime
 
-# For TRX balance
-def get_tron_balance(address):
-    url = f"https://api.trongrid.io/v1/accounts/{address}"
-    response = requests.get(url)
-    data = response.json()
-    
-    if 'data' in data and len(data['data']) > 0:
-        tron_balance = data['data'][0]['balance'] / 1000000  # Convert to TRX
-        return tron_balance
-    else:
-        return None
+from balethon import Bot, types, InlineKeyboardMarkup, InlineKeyboardButton
+import aiosqlite
 
-# For USDT on Ethereum
-def get_ethereum_balance(address):
-    etherscan_api_key = "YOUR_ETHERSCAN_API_KEY"
-    url = f"https://api.etherscan.io/api?module=account&action=tokenbalance&contractaddress=0xdac17f958d2ee523a2206206994597c13d831ec7&address={address}&tag=latest&apikey={etherscan_api_key}"
-    response = requests.get(url)
-    data = response.json()
-    
-    if data['status'] == '1':
-        usdt_balance = int(data['result']) / 10**6  # Convert to USDT
-        return usdt_balance
-    else:
-        return None
+API_KEY = "717675061:1p9xzK4wzYVqml3dVInIV4I3HgnW15ewFAWi8aIZ"
+ADMIN_ID = 2143480267  # عدد آی‌دی شما
 
-# Function to detect crypto type based on address format
-def detect_crypto(address):
-    if address.startswith("1") or address.startswith("3"):
-        return "Bitcoin (BTC)"
-    elif address.startswith("0x"):
-        return "Ethereum (ETH)"
-    elif address.startswith("T"):
-        return "Tron (TRX)"
-    else:
-        return "Unknown or unsupported address"
+bot = Bot(API_KEY)
 
-# Your logo
-logo = """
-███████╗██╗  ██╗███████╗ █████╗ ███╗   ██╗
-██╔════╝██║  ██║██╔════╝██╔══██╗████╗  ██║
-█████╗  ███████║███████╗███████║██╔██╗ ██║
-██╔══╝  ██╔══██║╚════██║██╔══██║██║╚██╗██║
-███████╗██║  ██║███████║██║  ██║██║ ╚████║
-╚══════╝╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝╚═╝  ╚═══╝
-"""
+# حافظه موقتی برای آزمون در حال اجرا
+user_answers = {}
 
-# Display menu
-def show_menu():
-    os.system('clear')  # Clear the screen in terminal
-    print(logo)
-    print("\033[1;32;40m===============================")
-    print("1. Check TRX Wallet Balance")
-    print("2. Check ETH Wallet Balance (USDT)")
-    print("3. Detect Crypto Type from Address")
-    print("4. Check Balances from a TXT File")
-    print("5. Exit")
-    print("===============================")
+EXAMS = {
+    "شهروند الکترونیک": "shahrvand.json",
+    "فتوشاپ": "photoshop.json",
+    "ایلیستریتور": "illustrator.json",
+    "کرل": "corel.json"
+}
 
-# User choice
-def user_choice():
-    choice = input("Enter your choice: ")
-    return choice
+# شروع ربات
+@bot.on_message(commands=["start"])
+async def start(message: types.Message):
+    user_id = message.from_user.id
+    async with aiosqlite.connect("exam_bot.db") as db:
+        async with db.execute("SELECT * FROM users WHERE user_id = ?", (user_id,)) as cur:
+            user = await cur.fetchone()
+            if not user:
+                await message.reply("سلام! لطفاً نام و نام خانوادگی خود را وارد کنید:")
+                return
+    await send_exam_menu(message.chat.id)
 
-# Check TRX balance
-def check_trx_balance():
-    tron_address = input("Enter your TRX address: ")
-    tron_balance = get_tron_balance(tron_address)
-    if tron_balance is not None:
-        print(f"\033[1;34;40mYour TRX balance: {tron_balance} TRX")
-    else:
-        print("\033[1;31;40mError fetching TRX balance.")
+# دریافت نام
+@bot.on_message()
+async def get_name(message: types.Message):
+    user_id = message.from_user.id
+    async with aiosqlite.connect("exam_bot.db") as db:
+        async with db.execute("SELECT * FROM users WHERE user_id = ?", (user_id,)) as cur:
+            exists = await cur.fetchone()
+        if exists:
+            return
+        await db.execute("INSERT INTO users (user_id, full_name) VALUES (?, ?)", (user_id, message.text))
+        await db.commit()
+    await message.reply("✅ ثبت شد.")
+    await send_exam_menu(message.chat.id)
 
-# Check ETH balance (USDT)
-def check_eth_balance():
-    eth_address = input("Enter your ETH address: ")
-    eth_balance = get_ethereum_balance(eth_address)
-    if eth_balance is not None:
-        print(f"\033[1;34;40mYour USDT balance: {eth_balance} USDT")
-    else:
-        print("\033[1;31;40mError fetching USDT balance.")
+# منوی انتخاب آزمون
+async def send_exam_menu(chat_id):
+    buttons = [[InlineKeyboardButton(text=title, callback_data=f"exam:{title}")] for title in EXAMS]
+    markup = InlineKeyboardMarkup(buttons)
+    await bot.send_message(chat_id, "📝 یکی از آزمون‌های زیر را انتخاب کنید:", reply_markup=markup)
 
-# Detect Crypto Type from Address
-def detect_address_crypto():
-    address = input("Enter the address: ")
-    crypto_type = detect_crypto(address)
-    print(f"\033[1;34;40mThis address belongs to: {crypto_type}")
-
-# Check balances from a file
-def check_balances_from_file():
-    file_path = input("Enter the path to the file containing addresses: ")
-    
-    if not os.path.exists(file_path):
-        print("\033[1;31;40mFile not found.")
+# کلیک روی آزمون
+@bot.on_callback_query()
+async def handle_exam_callback(query: types.CallbackQuery):
+    if not query.data.startswith("exam:"):
         return
-    
-    with open(file_path, 'r') as file:
-        lines = file.readlines()
-        for line in lines:
-            address = line.strip()
-            crypto_type = detect_crypto(address)
-            print(f"\033[1;32;40mAddress: {address} - {crypto_type}")
-            
-            if crypto_type == "Tron (TRX)":
-                tron_balance = get_tron_balance(address)
-                print(f"\033[1;34;40mTRX balance: {tron_balance} TRX" if tron_balance else "\033[1;31;40mError fetching TRX balance.")
-            elif crypto_type == "Ethereum (ETH)":
-                eth_balance = get_ethereum_balance(address)
-                print(f"\033[1;34;40mUSDT balance: {eth_balance} USDT" if eth_balance else "\033[1;31;40mError fetching USDT balance.")
-            else:
-                print("\033[1;31;40mUnsupported address or error fetching balance.")
 
-# Main menu and execution
-def main():
-    while True:
-        show_menu()
-        choice = user_choice()
-        
-        if choice == '1':
-            check_trx_balance()
-        elif choice == '2':
-            check_eth_balance()
-        elif choice == '3':
-            detect_address_crypto()
-        elif choice == '4':
-            check_balances_from_file()
-        elif choice == '5':
-            print("\033[1;32;40mExiting program...")
-            break
-        else:
-            print("\033[1;31;40mInvalid choice. Please try again.")
+    exam_title = query.data.split(":")[1]
+    user_id = query.from_user.id
 
-        input("\033[1;33;40mPress ENTER to continue...")
+    # بررسی اینکه قبلاً آزمون داده یا نه
+    async with aiosqlite.connect("exam_bot.db") as db:
+        async with db.execute("SELECT * FROM results WHERE user_id = ? AND exam = ?", (user_id, exam_title)) as cur:
+            done = await cur.fetchone()
+            if done:
+                return await query.message.reply("⛔️ شما قبلاً این آزمون را داده‌اید.")
 
-# Run the program
-if __name__ == "__main__":
-    main()
+    with open(EXAMS[exam_title], "r", encoding="utf-8") as f:
+        questions = json.load(f)
+
+    user_answers[user_id] = {
+        "exam": exam_title,
+        "questions": questions,
+        "current": 0,
+        "answers": []
+    }
+
+    await bot.answer_callback_query(query.id)
+    await send_question(user_id, query.message.chat.id)
+
+    # شروع تایمر آزمون
+    asyncio.create_task(exam_timer(user_id, query.message.chat.id))
+
+# ارسال سوال
+async def send_question(user_id, chat_id):
+    data = user_answers.get(user_id)
+    if not data:
+        return
+
+    if data["current"] >= len(data["questions"]):
+        return await finish_exam(user_id, chat_id)
+
+    q = data["questions"][data["current"]]
+    text = f"❓ سوال {data['current'] + 1}:\n{q['question']}"
+    options = [[InlineKeyboardButton(opt, callback_data=f"answer:{i}")] for i, opt in enumerate(q['options'])]
+    markup = InlineKeyboardMarkup(options)
+    await bot.send_message(chat_id, text, reply_markup=markup)
+
+# دریافت پاسخ سوال
+@bot.on_callback_query()
+async def handle_answer_callback(query: types.CallbackQuery):
+    if not query.data.startswith("answer:"):
+        return
+
+    user_id = query.from_user.id
+    selected = int(query.data.split(":")[1])
+    data = user_answers.get(user_id)
+
+    if not data:
+        return
+
+    current_q = data["questions"][data["current"]]
+    correct = current_q["answer"]
+    data["answers"].append((data["current"], selected, correct))
+
+    data["current"] += 1
+    await bot.answer_callback_query(query.id)
+    await send_question(user_id, query.message.chat.id)
+
+# پایان آزمون
+async def finish_exam(user_id, chat_id):
+    data = user_answers[user_id]
+    score = sum(1 for _, u, c in data["answers"] if u == c)
+    percent = int((score / len(data["questions"])) * 100)
+    now = datetime.now().strftime("%Y-%m-%d %H:%M")
+
+    async with aiosqlite.connect("exam_bot.db") as db:
+        await db.execute("INSERT INTO results (user_id, exam, score, date) VALUES (?, ?, ?, ?)",
+                         (user_id, data["exam"], percent, now))
+        for q_no, u, c in data["answers"]:
+            await db.execute("INSERT INTO answers (user_id, exam, q_no, user_answer, correct_answer) VALUES (?, ?, ?, ?, ?)",
+                             (user_id, data["exam"], q_no, u, c))
+        await db.commit()
+
+    await bot.send_message(chat_id, f"✅ آزمون به پایان رسید!\n🎯 نمره نهایی: {percent} از ۱۰۰")
+    del user_answers[user_id]
+
+# تایمر آزمون
+async def exam_timer(user_id, chat_id):
+    await asyncio.sleep(40 * 60)
+    if user_id in user_answers:
+        await bot.send_message(chat_id, "⏰ زمان آزمون به پایان رسید!")
+        await finish_exam(user_id, chat_id)
+
+# پنل ادمین
+@bot.on_message(commands=["panel"])
+async def panel(message: types.Message):
+    if message.from_user.id != ADMIN_ID:
+        return await message.reply("⛔️ فقط ادمین می‌تونه این بخش رو ببینه.")
+    text = "📋 لیست شرکت‌کنندگان:\n\n"
+    async with aiosqlite.connect("exam_bot.db") as db:
+        async with db.execute("""
+            SELECT u.full_name, r.exam, r.score, r.date 
+            FROM results r JOIN users u ON r.user_id = u.user_id
+            ORDER BY r.date DESC
+        """) as cursor:
+            rows = await cursor.fetchall()
+            for full_name, exam, score, date in rows:
+                text += f"👤 {full_name}\n📘 {exam}\n🎯 نمره: {score}\n🕰 {date}\n---\n"
+    await message.reply(text or "هیچ نتیجه‌ای ثبت نشده.")
+
+# اجرای ربات
+bot.run()
