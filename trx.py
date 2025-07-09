@@ -2,8 +2,7 @@ import asyncio
 import json
 from datetime import datetime
 from balethon import Client
-# [اصلاح شد] حذف filters از import و استفاده از روش‌های جایگزین
-from balethon.objects import Message, CallbackQuery, InlineKeyboard, InlineKeyboardButton, Update
+from balethon.objects import Message, CallbackQuery, InlineKeyboard, InlineKeyboardButton
 import aiosqlite
 
 # --- تنظیمات اولیه ---
@@ -180,7 +179,7 @@ async def send_question(user_id: int):
         return
 
     q = data["questions"][data["current"]]
-    text = f"❓ سوال {data['current'] + 1} از {len(data['questions'])}:\n\n**{q['question']}**"
+    text = f"❓ سوال {data['current'] + 1} از {len(data['questions'])}:\n\n{q['question']}"
     options = [[InlineKeyboardButton(opt, callback_data=f"answer:{i}")] for i, opt in enumerate(q['options'])]
     markup = InlineKeyboard(options)
     await bot.send_message(data["chat_id"], text, reply_markup=markup)
@@ -239,10 +238,22 @@ async def admin_panel(message: Message):
 
 # --- اجرای ربات ---
 
+async def main():
+    """تابع اصلی اجرای ربات."""
+    try:
+        # راه‌اندازی پایگاه داده
+        await setup_database()
+        
+        # اجرای ربات
+        print("Bot is starting...")
+        await bot.run()
+        
+    except Exception as e:
+        print(f"خطا در اجرای ربات: {e}")
+        
+    finally:
+        # اطمینان از بسته شدن اتصال
+        await bot.close()
+
 if __name__ == "__main__":
-    # راه‌اندازی پایگاه داده
-    asyncio.run(setup_database())
-    
-    # اجرای ربات
-    print("Bot is starting...")
-    bot.run()
+    asyncio.run(main())
