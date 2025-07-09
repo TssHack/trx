@@ -238,22 +238,18 @@ async def admin_panel(message: Message):
 
 # --- اجرای ربات ---
 
-async def main():
+def main():
     """تابع اصلی اجرای ربات."""
     try:
         # راه‌اندازی پایگاه داده
-        await setup_database()
+        asyncio.run(setup_database())
         
         # اجرای ربات
         print("Bot is starting...")
-        await bot.run()
+        bot.run()
         
     except Exception as e:
         print(f"خطا در اجرای ربات: {e}")
-        
-    finally:
-        # اطمینان از بسته شدن اتصال
-        await bot.close()
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
