@@ -5,16 +5,16 @@ from telethon import TelegramClient, events, Button
 from telethon.tl.types import User
 import aiosqlite
 
-‎# --- تنظیمات اولیه ---
+
 API_ID = '18377832'  # از my.telegram.org دریافت کنید
 API_HASH = 'ed8556c450c6d0fd68912423325dd09c'  # از my.telegram.org دریافت کنید
 BOT_TOKEN = "8186718003:AAGoJsGyE7SajlKv2SDbII5_NUuo-ptk40A"
 ADMIN_ID = 1848591768
 
-‎# ایجاد کلاینت
+
 bot = TelegramClient('bot', API_ID, API_HASH).start(bot_token=BOT_TOKEN)
 
-‎# حافظه موقت برای آزمون‌های در حال اجرا
+
 user_exams_in_progress = {}
 
 EXAMS = {
@@ -56,7 +56,7 @@ async def setup_database():
         await db.commit()
     print("Database setup complete.")
 
-‎# --- توابع اصلی ربات ---
+
 async def send_exam_menu(chat_id: int):
 ‎    """منوی انتخاب آزمون را ارسال می‌کند."""
     print(f"Sending exam menu to chat {chat_id}")
@@ -66,7 +66,7 @@ async def send_exam_menu(chat_id: int):
     
     await bot.send_message(chat_id, "📝 یکی از آزمون‌های زیر را انتخاب کنید:", buttons=buttons)
 
-‎# --- کنترل‌کننده‌های پیام ---
+
 @bot.on(events.NewMessage(pattern='/start'))
 async def handle_start(event):
 ‎    """کنترل‌کننده دستور /start."""
@@ -100,7 +100,7 @@ async def handle_panel(event):
 @bot.on(events.NewMessage)
 async def handle_messages(event):
 ‎    """کنترل‌کننده عمومی برای تمام پیام‌های دریافتی."""
-‎    # نادیده گرفتن دستورات که قبلاً پردازش شده‌اند
+
     if event.text and (event.text.startswith('/start') or event.text.startswith('/panel')):
         return
     
@@ -113,7 +113,7 @@ async def handle_messages(event):
     
     user_id = event.sender_id
     
-‎    # پردازش پیام‌های عادی
+
     print("Processing regular message")
     try:
         async with aiosqlite.connect(DB_NAME) as db:
@@ -132,7 +132,7 @@ async def handle_messages(event):
         print(f"Error in message handling: {e}")
         await event.reply("خطا در سیستم. لطفاً دوباره تلاش کنید.")
 
-‎# --- کنترل‌کننده‌های کلیک ---
+
 @bot.on(events.CallbackQuery)
 async def handle_callback_queries(event):
 ‎    """کنترل‌کننده عمومی برای تمام callback queryها."""
@@ -198,7 +198,9 @@ async def handle_answer_submission(event):
     await event.delete()
     await send_question(user_id)
 
-‎# --- منطق آزمون ---
+
+
+
 async def send_question(user_id: int):
 ‎    """سوال فعلی را برای کاربر ارسال می‌کند."""
     data = user_exams_in_progress.get(user_id)
@@ -248,7 +250,7 @@ async def exam_timer(user_id: int):
         await bot.send_message(chat_id, "⏰ زمان آزمون شما به پایان رسید!")
         await finish_exam(user_id)
 
-‎# --- پنل ادمین ---
+
 async def admin_panel(event):
 ‎    """نمایش نتایج آزمون‌ها برای ادمین."""
     text = "📋 لیست نتایج شرکت‌کنندگان:\n\n"
@@ -265,18 +267,18 @@ async def admin_panel(event):
             for full_name, exam, score, date in rows:
                 text += f"👤 نام: {full_name}\n📘 آزمون: {exam}\n🎯 نمره: {score}\n🕰 تاریخ: {date}\n---\n"
     
-‎    # برای پیام‌های طولانی، بهتر است آن را در چند بخش ارسال کرد
+
     for i in range(0, len(text), 4000):
         await event.reply(text[i:i + 4000])
 
-‎# --- اجرای ربات ---
+
 async def main():
 ‎    """تابع اصلی اجرای ربات."""
     try:
-‎        # راه‌اندازی پایگاه داده
+
         await setup_database()
         
-‎        # اجرای ربات
+
         print("Bot is starting...")
         await bot.run_until_disconnected()
         
