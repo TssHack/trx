@@ -2,40 +2,39 @@ import asyncio
 import json
 from datetime import datetime
 from telethon import TelegramClient, events, Button
+from telethon.tl.types import User
 import aiosqlite
 import logging
 
-# برای لاگ‌گیری بهتر خطاها
+# Configure logging for better debugging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
-# --- اطلاعات ربات و ادمین ---
-# توصیه می‌شود این اطلاعات را از متغیرهای محیطی (Environment Variables) بخوانید
-API_ID = '18377832'
-API_HASH = 'ed8556c450c6d0fd68912423325dd09c'
-BOT_TOKEN = "8186718003:AAGoJsGyE7SajlKv2SDbII5_NUuo-ptk40A"
+
+API_ID = '18377832'  # Get from my.telegram.org
+API_HASH = 'ed8556c450c6d0fd68912423325dd09c'  # Get from my.telegram.org
+BOT_TOKEN = "8186718003:AAGoJsGyE7SajlKv2SDbII5_NUuo-ptk40B" # Ensure this is correct
 ADMIN_ID = 1848591768
-DB_NAME = "exam_bot.db"
 
-# --- دیکشنری آزمون‌ها ---
+
+# Initialize the bot client globally, but don't start it here.
+# The .start() call needs to happen within an asyncio event loop.
+bot = TelegramClient('bot', API_ID, API_HASH)
+
+
+user_exams_in_progress = {}
+
 EXAMS = {
     "شهروند الکترونیک": "shahrvand.json",
     "فتوشاپ": "photoshop.json",
     "ایلیستریتور": "illustrator.json",
     "کرل": "corel.json"
 }
+DB_NAME = "exam_bot.db"
 
-# --- مدیریت وضعیت آزمون‌های در حال اجرا ---
-# FIX: این دیکشنری وضعیت آزمون کاربر را در حافظه نگه می‌دارد.
-# اگر ربات ری‌استارت شود، اطلاعات از بین می‌رود. برای پروژه‌های بزرگ‌تر،
-# این وضعیت را نیز در پایگاه داده ذخیره کنید.
-user_exams_in_progress = {}
-
-# --- ساخت کلاینت تلگرام ---
-bot = TelegramClient('bot_session', API_ID, API_HASH).start(bot_token=BOT_TOKEN)
-
-# --- مدیریت پایگاه داده ---
+# --- Database Management ---
 async def setup_database():
-    """پایگاه داده و جداول را در صورت عدم وجود ایجاد می‌کند."""
+    """Creates the database and tables if they don't exist."""
     async with aiosqlite.connect(DB_NAME) as db:
         await db.execute("""
         CREATE TABLE IF NOT EXISTS users (
@@ -62,34 +61,44 @@ async def setup_database():
             FOREIGN KEY (user_id) REFERENCES users(user_id)
         )""")
         await db.commit()
-    logging.info("Database setup complete.")
+    logger.info("Database setup complete.")
 
-async def send_exam_menu(chat_id: int, text: str = "📝 یکی از آزمون‌های زیر را انتخاب کنید:"):
-    """منوی انتخاب آزمون را ارسال می‌کند."""
-    buttons = [Button.inline(title, f"exam:{title}") for title in EXAMS]
-    await bot.send_message(chat_id, text, buttons=[buttons])
 
-# --- کنترل‌کننده‌های رویدادها ---
+async def send_exam_menu(chat_id: int):
+    """Sends the exam selection menu."""
+    logger.info(f"Sending exam menu to chat {chat_id}")
+    buttons = []
+    for title in EXAMS:
+        buttons.append([Button.inline(title, f"exam:{title}")])
+    
+    await bot.send_message(chat_id, "📝 یکی از آزمون‌های زیر را انتخاب کنید:", buttons=buttons)
+
 
 @bot.on(events.NewMessage(pattern='/start'))
 async def handle_start(event):
-    """کنترل‌کننده دستور /start. کاربر را ثبت‌نام کرده یا منو را نمایش می‌دهد."""
+    """Handles the /start command."""
+    logger.info(f"Start command from user: {event.sender_id}")
+    
     user_id = event.sender_id
+    
     try:
         async with aiosqlite.connect(DB_NAME) as db:
             async with db.execute("SELECT * FROM users WHERE user_id = ?", (user_id,)) as cur:
                 user = await cur.fetchone()
+                logger.info(f"User found in DB: {user}")
                 if user:
-                    await send_exam_menu(event.chat_id, f"سلام {user[1]} عزیز، خوش آمدید!")
+                    await send_exam_menu(event.chat_id)
                 else:
-                    await event.reply("👋 سلام! به ربات آزمون خوش آمدید.\nلطفاً نام و نام خانوادگی خود را برای ثبت‌نام وارد کنید:")
+                    await event.reply("سلام! به ربات آزمون خوش آمدید.\nلطفاً نام و نام خانوادگی خود را برای ثبت‌نام وارد کنید:")
     except Exception as e:
-        logging.error(f"Error in /start for user {user_id}: {e}")
-        await event.reply("خطایی در سیستم رخ داده است. لطفاً بعدا تلاش کنید.")
+        logger.exception(f"Error in start command for user {user_id}")
+        await event.reply("خطا در سیستم. لطفاً دوباره تلاش کنید.")
 
 @bot.on(events.NewMessage(pattern='/panel'))
 async def handle_panel(event):
-    """کنترل‌کننده دستور /panel برای نمایش نتایج به ادمین."""
+    """Handles the /panel command."""
+    logger.info(f"Panel command from user: {event.sender_id}")
+    
     if event.sender_id == ADMIN_ID:
         await admin_panel(event)
     else:
@@ -97,178 +106,203 @@ async def handle_panel(event):
 
 @bot.on(events.NewMessage)
 async def handle_messages(event):
-    """کنترل‌کننده عمومی برای تمام پیام‌های متنی."""
-    if event.text.startswith('/'):
-        return  # دستورات توسط کنترل‌کننده‌های دیگر مدیریت می‌شوند
+    """General handler for all incoming messages."""
 
-    user_id = event.sender_id
-
-    # FIX: اگر کاربر در حال آزمون دادن باشد، به پیام‌های متنی او پاسخ نامرتبط نمی‌دهیم.
-    if user_id in user_exams_in_progress:
-        await event.reply("⏳ لطفاً آزمون خود را تمام کرده یا با استفاده از دکمه‌ها به سوالات پاسخ دهید.")
+    # Ignore commands to prevent reprocessing
+    if event.text and (event.text.startswith('/start') or event.text.startswith('/panel')):
         return
-
+    
+    # Ignore messages without text content
+    if not event.text:
+        return
+    
+    logger.info(f"Message received: '{event.text}' from user: {event.sender_id} in chat: {event.chat_id}")
+    
+    user_id = event.sender_id
+    
     try:
         async with aiosqlite.connect(DB_NAME) as db:
             async with db.execute("SELECT * FROM users WHERE user_id = ?", (user_id,)) as cur:
                 user_exists = await cur.fetchone()
             
             if not user_exists:
-                # ثبت نام کاربر جدید
-                full_name = event.text.strip()
-                if not full_name:
-                    await event.reply("نام معتبری وارد نشده است. لطفاً دوباره تلاش کنید.")
-                    return
-                
-                await db.execute("INSERT INTO users (user_id, full_name) VALUES (?, ?)", (user_id, full_name))
+                # Register new user
+                await db.execute("INSERT INTO users (user_id, full_name) VALUES (?, ?)", (user_id, event.text))
                 await db.commit()
-                await event.reply(f"✅ ثبت نام شما با نام \"{full_name}\" با موفقیت انجام شد.")
+                await event.reply(f"✅ ثبت نام شما با نام \"{event.text}\" با موفقیت انجام شد.")
                 await send_exam_menu(event.chat_id)
-            else:
-                # اگر کاربر ثبت‌نام کرده ولی دستوری وارد نکرده
-                await send_exam_menu(event.chat_id, "برای شروع یک آزمون جدید، از منوی زیر انتخاب کنید:")
-
+            elif user_id not in user_exams_in_progress:
+                # If user exists and is not in an exam, prompt them to start one
+                await event.reply("برای شروع، یکی از آزمون‌ها را از منو انتخاب کنید. /start")
     except Exception as e:
-        logging.error(f"Error in message handler for user {user_id}: {e}")
+        logger.exception(f"Error in general message handling for user {user_id}")
         await event.reply("خطا در سیستم. لطفاً دوباره تلاش کنید.")
+
 
 @bot.on(events.CallbackQuery)
 async def handle_callback_queries(event):
-    """کنترل‌کننده عمومی برای تمام دکمه‌های شیشه‌ای (callback query)."""
+    """General handler for all callback queries."""
     data = event.data.decode()
+    logger.info(f"Callback query received: {data} from user: {event.sender_id}")
     
     if data.startswith("exam:"):
         await handle_exam_selection(event)
     elif data.startswith("answer:"):
         await handle_answer_submission(event)
 
-# --- منطق اصلی آزمون ---
-
 async def handle_exam_selection(event):
-    """پاسخ به کلیک روی دکمه انتخاب آزمون و شروع آن."""
+    """Responds to an exam selection button click."""
     exam_title = event.data.decode().split(":")[1]
     user_id = event.sender_id
-
-    # FIX: بررسی اینکه آیا کاربر هم‌اکنون آزمون دیگری در حال اجرا دارد یا خیر
-    if user_id in user_exams_in_progress:
-        await event.answer("⛔️ شما یک آزمون دیگر در حال اجرا دارید. لطفاً ابتدا آن را تمام کنید.", alert=True)
-        return
-
-    async with aiosqlite.connect(DB_NAME) as db:
-        async with db.execute("SELECT * FROM results WHERE user_id = ? AND exam = ?", (user_id, exam_title)) as cur:
-            if await cur.fetchone():
-                await event.answer("⛔️ شما قبلاً در این آزمون شرکت کرده‌اید.", alert=True)
-                return
+    logger.info(f"Exam selected: {exam_title} by user {user_id}")
 
     try:
-        with open(EXAMS[exam_title], "r", encoding="utf-8") as f:
-            questions = json.load(f)
-    except FileNotFoundError:
-        await event.answer(f"خطا: فایل سوالات آزمون '{exam_title}' یافت نشد!", alert=True)
-        return
-    except json.JSONDecodeError:
-        await event.answer(f"خطا: فایل سوالات آزمون '{exam_title}' معتبر نیست!", alert=True)
-        return
-    
-    # NEW: ایجاد تایمر و ذخیره تسک آن برای قابلیت لغو کردن
-    timer_task = asyncio.create_task(exam_timer(user_id, 40 * 60)) # 40 دقیقه
+        async with aiosqlite.connect(DB_NAME) as db:
+            async with db.execute("SELECT * FROM results WHERE user_id = ? AND exam = ?", (user_id, exam_title)) as cur:
+                if await cur.fetchone():
+                    await event.answer("⛔️ شما قبلاً در این آزمون شرکت کرده‌اید.", alert=True)
+                    return
 
-    user_exams_in_progress[user_id] = {
-        "exam": exam_title,
-        "questions": questions,
-        "current": 0,
-        "answers": [],
-        "chat_id": event.chat_id,
-        "timer_task": timer_task # NEW: ذخیره تسک تایمر
-    }
+        try:
+            with open(EXAMS[exam_title], "r", encoding="utf-8") as f:
+                questions = json.load(f)
+        except FileNotFoundError:
+            await event.answer(f"خطا: فایل سوالات آزمون '{exam_title}' یافت نشد!", alert=True)
+            logger.error(f"Exam file not found: {EXAMS[exam_title]}")
+            return
 
-    await event.answer(f"آزمون {exam_title} شروع می‌شود...")
-    await event.delete()
-    await send_question(user_id)
+        user_exams_in_progress[user_id] = {
+            "exam": exam_title,
+            "questions": questions,
+            "current": 0,
+            "answers": [],
+            "chat_id": event.chat_id,
+            "timer_task": None # To store the timer task
+        }
+
+        await event.answer(f"آزمون {exam_title} شروع می‌شود...")
+        await event.delete() # Delete the message with exam selection buttons
+        
+        # Start the exam timer and store its task
+        user_exams_in_progress[user_id]["timer_task"] = asyncio.create_task(exam_timer(user_id))
+        await send_question(user_id)
+    except Exception as e:
+        logger.exception(f"Error in exam selection for user {user_id} and exam {exam_title}")
+        await event.answer("خطا در شروع آزمون. لطفاً دوباره تلاش کنید.", alert=True)
+
 
 async def handle_answer_submission(event):
-    """پردازش پاسخ کاربر به یک سوال."""
+    """Responds to a question option button click."""
     user_id = event.sender_id
-    exam_data = user_exams_in_progress.get(user_id)
-    if not exam_data:
+    data = user_exams_in_progress.get(user_id)
+    if not data:
         await event.answer("خطا: آزمون شما یافت نشد. لطفاً دوباره شروع کنید.", alert=True)
+        logger.warning(f"Answer submission for non-existent exam for user {user_id}")
         return
 
-    selected_option_index = int(event.data.decode().split(":")[1])
-    current_q_index = exam_data["current"]
-    
-    if current_q_index >= len(exam_data["questions"]):
-        return # آزمون قبلا تمام شده
+    try:
+        selected_option_index = int(event.data.decode().split(":")[1])
+        current_q_index = data["current"]
+        
+        # Prevent out-of-bounds access if multiple answers for the same question are sent
+        if current_q_index >= len(data["questions"]):
+            logger.warning(f"Received answer for question beyond exam length for user {user_id}")
+            await event.answer("این سوال قبلاً پاسخ داده شده یا آزمون به پایان رسیده است.", alert=True)
+            return
 
-    correct_answer_index = exam_data["questions"][current_q_index]["answer"]
-    exam_data["answers"].append((current_q_index, selected_option_index, correct_answer_index))
-    exam_data["current"] += 1
-    
-    await event.delete()
-    await send_question(user_id)
+        correct_answer_index = data["questions"][current_q_index]["answer"]
+        data["answers"].append((current_q_index, selected_option_index, correct_answer_index))
+        data["current"] += 1
+        
+        await event.delete() # Delete the previous question message
+        await send_question(user_id)
+    except Exception as e:
+        logger.exception(f"Error in answer submission for user {user_id}")
+        await event.answer("خطا در ثبت پاسخ. لطفاً دوباره تلاش کنید.", alert=True)
+
 
 async def send_question(user_id: int):
-    """سوال فعلی را برای کاربر ارسال می‌کند."""
-    exam_data = user_exams_in_progress.get(user_id)
-    if not exam_data:
+    """Sends the current question to the user."""
+    data = user_exams_in_progress.get(user_id)
+    if not data:
         return
 
-    if exam_data["current"] >= len(exam_data["questions"]):
+    if data["current"] >= len(data["questions"]):
         await finish_exam(user_id)
         return
 
-    q = exam_data["questions"][exam_data["current"]]
-    text = f"❓ سوال {exam_data['current'] + 1} از {len(exam_data['questions'])}:\n\n**{q['question']}**"
+    q = data["questions"][data["current"]]
+    text = f"❓ سوال {data['current'] + 1} از {len(data['questions'])}:\n\n{q['question']}"
     
-    buttons = [Button.inline(opt, f"answer:{i}") for i, opt in enumerate(q['options'])]
+    buttons = []
+    for i, opt in enumerate(q['options']):
+        buttons.append([Button.inline(opt, f"answer:{i}")])
     
-    await bot.send_message(exam_data["chat_id"], text, buttons=[buttons])
+    try:
+        await bot.send_message(data["chat_id"], text, buttons=buttons)
+    except Exception as e:
+        logger.exception(f"Error sending question to user {user_id}")
+        # Optionally, try to finish the exam if sending question fails
+        await bot.send_message(data["chat_id"], "خطا در ارسال سوال. آزمون به پایان رسید.")
+        await finish_exam(user_id)
 
 async def finish_exam(user_id: int):
-    """آزمون را به پایان رسانده، نتایج را ذخیره و وضعیت کاربر را پاک می‌کند."""
+    """Finishes the exam and saves the results."""
     if user_id not in user_exams_in_progress:
-        return # اگر آزمون قبلا تمام شده باشد، کاری انجام نده
+        return
         
-    exam_data = user_exams_in_progress[user_id]
+    data = user_exams_in_progress[user_id]
+    chat_id = data["chat_id"]
     
-    # NEW: لغو کردن تسک تایمر تا پس از پایان آزمون اجرا نشود
-    exam_data["timer_task"].cancel()
-
-    chat_id = exam_data["chat_id"]
-    score = sum(1 for _, user_ans, correct_ans in exam_data["answers"] if user_ans == correct_ans)
-    total_questions = len(exam_data["questions"])
-    percent = int((score / total_questions) * 100) if total_questions > 0 else 0
+    # Cancel the associated timer task if it's still running
+    if data["timer_task"] and not data["timer_task"].done():
+        data["timer_task"].cancel()
+        try:
+            await data["timer_task"] # Await to ensure it's cancelled and handles any cleanup
+        except asyncio.CancelledError:
+            pass # Expected
+    
+    score = sum(1 for _, user_ans, correct_ans in data["answers"] if user_ans == correct_ans)
+    percent = int((score / len(data["questions"])) * 100) if data["questions"] else 0
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
 
-    async with aiosqlite.connect(DB_NAME) as db:
-        await db.execute("INSERT INTO results (user_id, exam, score, date) VALUES (?, ?, ?, ?)",
-                         (user_id, exam_data["exam"], percent, now))
-        for q_no, u_ans, c_ans in exam_data["answers"]:
-            await db.execute("INSERT INTO answers (user_id, exam, q_no, user_answer, correct_answer) VALUES (?, ?, ?, ?, ?)",
-                             (user_id, exam_data["exam"], q_no, u_ans, c_ans))
-        await db.commit()
-
-    # FIX: پاک کردن وضعیت کاربر از حافظه پس از اتمام تمام کارها
-    del user_exams_in_progress[user_id]
-    
-    await bot.send_message(chat_id, f"✅ آزمون به پایان رسید!\n\n**آزمون:** {exam_data['exam']}\n**🎯 نمره نهایی:** {percent} از ۱۰۰")
-    await send_exam_menu(chat_id, "می‌توانید در آزمون دیگری شرکت کنید:")
-
-async def exam_timer(user_id: int, duration: int):
-    """تایمر آزمون. اگر زمان تمام شود، آزمون را به صورت خودکار به پایان می‌رساند."""
     try:
-        await asyncio.sleep(duration)
+        async with aiosqlite.connect(DB_NAME) as db:
+            await db.execute("INSERT INTO results (user_id, exam, score, date) VALUES (?, ?, ?, ?)",
+                            (user_id, data["exam"], percent, now))
+            for q_no, u_ans, c_ans in data["answers"]:
+                await db.execute("INSERT INTO answers (user_id, exam, q_no, user_answer, correct_answer) VALUES (?, ?, ?, ?, ?)",
+                                (user_id, data["exam"], q_no, u_ans, c_ans))
+            await db.commit()
+
+        await bot.send_message(chat_id, f"✅ آزمون به پایان رسید!\n\nآزمون: {data['exam']}\n🎯 نمره نهایی: {percent} از ۱۰۰")
+    except Exception as e:
+        logger.exception(f"Error finishing exam or saving results for user {user_id}")
+        await bot.send_message(chat_id, "خطا در ثبت نتایج آزمون شما.")
+    finally:
+        del user_exams_in_progress[user_id]
+        logger.info(f"Exam for user {user_id} finished and data cleared.")
+
+
+async def exam_timer(user_id: int):
+    """40-minute timer for the exam."""
+    try:
+        await asyncio.sleep(40 * 60) # 40 minutes in seconds
         if user_id in user_exams_in_progress:
             chat_id = user_exams_in_progress[user_id]["chat_id"]
-            logging.info(f"Exam timer finished for user {user_id}.")
             await bot.send_message(chat_id, "⏰ زمان آزمون شما به پایان رسید!")
             await finish_exam(user_id)
+            logger.info(f"Exam timer for user {user_id} expired.")
     except asyncio.CancelledError:
-        # NEW: وقتی تایمر لغو می‌شود، این استثنا رخ می‌دهد که طبیعی است
-        logging.info(f"Exam timer cancelled for user {user_id}.")
+        logger.info(f"Exam timer for user {user_id} was cancelled.")
+        pass # Timer was cancelled, which is expected if exam finishes normally
+    except Exception as e:
+        logger.exception(f"Error in exam timer for user {user_id}")
+
 
 async def admin_panel(event):
-    """نتایج تمام آزمون‌ها را برای ادمین ارسال می‌کند."""
+    """Displays exam results for the admin."""
+    text = "📋 لیست نتایج شرکت‌کنندگان:\n\n"
     try:
         async with aiosqlite.connect(DB_NAME) as db:
             async with db.execute("""
@@ -277,31 +311,41 @@ async def admin_panel(event):
                 ORDER BY r.date DESC
             """) as cursor:
                 rows = await cursor.fetchall()
-
                 if not rows:
-                    await event.reply("هنوز هیچ نتیجه‌ای در سیستم ثبت نشده است.")
-                    return
+                    return await event.reply("هنوز هیچ نتیجه‌ای در سیستم ثبت نشده است.")
                 
-                text = "📋 **لیست نتایج شرکت‌کنندگان:**\n\n"
                 for full_name, exam, score, date in rows:
-                    text += f"👤 **نام:** {full_name}\n📘 **آزمون:** {exam}\n🎯 **نمره:** {score}\n🕰 **تاریخ:** {date}\n---\n"
+                    text += f"👤 نام: {full_name}\n📘 آزمون: {exam}\n🎯 نمره: {score}\n🕰 تاریخ: {date}\n---\n"
         
-                # ارسال نتایج در چند پیام در صورت طولانی بودن
-                for i in range(0, len(text), 4000):
-                    await event.reply(text[i:i+4000])
-
+        # Telegram message limit is 4096 characters for text messages.
+        # Splitting if the text is too long.
+        for i in range(0, len(text), 4000): # Use 4000 to be safe
+            await event.reply(text[i:i + 4000])
     except Exception as e:
-        logging.error(f"Error in /panel: {e}")
-        await event.reply("خطا در دریافت اطلاعات از پایگاه داده.")
+        logger.exception(f"Error in admin panel for admin {event.sender_id}")
+        await event.reply("خطا در نمایش پنل ادمین.")
+
 
 async def main():
-    """تابع اصلی برای راه‌اندازی ربات."""
+    """Main function to run the bot."""
     await setup_database()
-    logging.info("Bot is starting...")
-    await bot.run_until_disconnected()
+    
+    logger.info("Bot is starting...")
+    # This is the crucial change:
+    # Use 'async with bot:' for proper connection management within an event loop.
+    # It ensures the client is properly started and disconnected.
+    async with bot:
+        logger.info("Bot client connected. Running until disconnected...")
+        await bot.run_until_disconnected()
+    logger.info("Bot has disconnected.")
 
 if __name__ == "__main__":
+    # Ensure there's only one asyncio.run() call for the entire application lifecycle.
+    # asyncio.run() creates a new event loop and closes it at the end.
     try:
         asyncio.run(main())
+    except KeyboardInterrupt:
+        logger.info("Bot stopped by user (Ctrl+C).")
     except Exception as e:
-        logging.critical(f"Failed to run bot: {e}")
+        logger.exception("An unhandled error occurred in the main execution.")
+
